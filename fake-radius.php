@@ -9,6 +9,7 @@
 /* config set */
 $port = 1812;
 $qtd = 1;
+$secret = "testing123";
 
 /* debug options */
 error_reporting(E_ALL);
@@ -47,22 +48,23 @@ function set_authenticator(&$pkt) {
 
 /* handlers */
 function cb_coa_request($payload, $sock, $client_ip, $client_port) {
-  echo "STUB: cb_coa_request()\n";
-
   $pkt = array();
-  $pkt[0] = 44; // CoA-ACK
-  $pkt[1] = 30; // identifier
-  $pkt[2] =  0; // length
-  $pkt[3] = 20; // length
-  set_authenticator($pkt); // authenticator
 
-  dump_hex($pkt);
+  dbg("[<<] Response the request with CoA-ACK.");
 
+  $pkt[0] = 44;               // CoA-ACK
+  $pkt[1] = ord($payload[1]); // identifier
+  $pkt[2] =  0;               // length
+  $pkt[3] = 20;               // length
+  set_authenticator($pkt);    // authenticator
+
+//  dump_hex($pkt);
+  
   return wrapper_send($pkt, $sock, $client_ip, $client_port);
 }
 
 function cb_access_request($payload, $sock, $client_ip, $client_port) {
-  echo "STUB: cb_access_request()\n";
+  echo "STUB: cb_access_request()";
   return true;
 }
 
@@ -84,9 +86,15 @@ $code_map = array( /* Codes: Radius-Auth, rfc https://tools.ietf.org/html/rfc286
                   45 => array("CoA-NAK",            null ),
 );
 
-function wrapper_send($payload, $sock, $client_ip, $client_port) {
-  if (!socket_sendto($sock, implode($payload), count($payload), 0 , $client_ip, $client_port)) {
-    echo "socket_sendto(): failed: reason: " . socket_strerror(socket_last_error($msgsock)) . "\n";
+function wrapper_send($payload /* array data: eg: array(1, 23, 00, 22, 111)*/,
+                      $sock,
+                      $client_ip,
+                      $client_port) {
+  $bytes = call_user_func_array("pack", array_merge(array("C*"), $payload));
+
+  $ret = socket_sendto($sock, $bytes, strlen($bytes), 0 , $client_ip, $client_port);
+  if (!$ret) {  
+    echo "socket_sendto(): failed: reason: " . socket_strerror(socket_last_error()) . "\n";
     return false;
   }
   return true;
@@ -101,6 +109,8 @@ function get_request_type($packet) {
 
     $map = $code_map[$byte0];
     $obj->code = $map[0];
+    $obj->identifier = ord($packet[1]);
+    $obj->length = ord($packet[3]);
     $obj->callback = $map[1];
 
 		return $obj;
@@ -125,7 +135,8 @@ dbg("/* Iniciando Servidor RadiusFake {auth, coa} : na porta udp://$port */");
 // busyloop()
 do {
   $payload = null;
-  $socklen = socket_recvfrom ($sock, $payload, 512, 0, $client_ip, $client_port);
+
+  dbg("Waiting requests.");
 
   if (!($socklen = socket_recvfrom ($sock, $payload, 512, 0, $client_ip, $client_port))) {
     dbg("WARNING: socket_read() failed: reason: " . socket_strerror(socket_last_error($msgsock)));
@@ -135,20 +146,23 @@ do {
   dbg("** Recebendo %d pacotes de $client_ip:$client_port>", count($socklen));
 
   // core
-  $request = get_request_type($payload[0]);
+  $request = get_request_type($payload);
   if (!$request) {
-    dbg("WARNING: The %d is a uknown code, ignoring.", $request->code);
+    dbg("WARNING: The %d is a uknown code, ignoring.", $payload[0]);
+    dump_hex($payload);
     continue;
   }
   
-  dbg("[<<] Receiving the packet '%s', calling %s()", $request->code, $request->callback);
+  dbg("[>>] Receiving the packet '%s' identifier=%d length=%d, calling %s()",
+            $request->code, $request->identifier, $request->length, $request->callback
+  );
 
   if (!function_exists($request->callback)) {
     dbg("ERROR: The callback %s() don't exist, ignoring.\n", $request->callback);
     continue;
   }
-
-  if(!call_user_func($request->callback, $payload, $sock, $client_ip , $client_port)) {
+  
+  if(!call_user_func($request->callback, $payload, $sock, $client_ip, $client_port)) {
     dbg("the callback %s() return false", $request->callback);
   }
 
