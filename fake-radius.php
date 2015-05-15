@@ -22,7 +22,6 @@ set_time_limit(0);
 ob_implicit_flush();
 
 /* helpers */
-
 function dbg() {
   $arg = func_get_args();
   $arg[0] = sprintf("**dbg(): %s \n", $arg[0]);
@@ -39,33 +38,54 @@ function dump_hex($pkt) {
   echo "} \n</hexdump>\n";
 }
 
-/**/
-function set_authenticator(&$pkt) {
-  for ($i=0; $i < 16; $i++) {
-    $pkt[$i+4] = rand() & 0xff;
+function wrapper_send($payload /* array data: eg: array(1, 23, 00, 22, 111)*/,
+                      $sock,
+                      $client_ip,
+                      $client_port) {
+  $bytes = call_user_func_array("pack", array_merge(array("C*"), $payload));
+
+  $ret = socket_sendto($sock, $bytes, strlen($bytes), 0 , $client_ip, $client_port);
+  if (!$ret) {  
+    echo "socket_sendto(): failed: reason: " . socket_strerror(socket_last_error()) . "\n";
+    return false;
+  }
+  return true;
+}
+
+function get_request_type($packet) {
+  GLOBAL $code_map;
+  $byte0 = ord($packet[0]);
+
+  if (@array_key_exists($byte0, $code_map)) {
+    $obj = new StdClass;
+
+    $map = $code_map[$byte0];
+    $obj->code = $map[0];
+    $obj->identifier = ord($packet[1]);
+    $obj->length = ord($packet[3]);
+    $obj->callback = $map[1];
+
+    return $obj;
+  } else {
+    return null;
   }
 }
 
-/* handlers */
-function cb_coa_request($payload, $sock, $client_ip, $client_port) {
-  $pkt = array();
+/*
+ResponseAuth = MD5(Code+ID+Length+RequestAuth+Attributes+Secret) where + denotes concatenation.
+*/
+function set_authenticator(&$pkt, $code, $id, $length, $req_auth) {
+  $ident = $code . $id . $length . $req_auth  ;
 
-  dbg("[<<] Response the request with CoA-ACK.");
+  dbg("DEBUG: set_authenticator(): code=%d id=%d lenght=%d req_auth=%d", $code, $id, $lenght, $req_auth);
 
-  $pkt[0] = 44;               // CoA-ACK
-  $pkt[1] = ord($payload[1]); // identifier
-  $pkt[2] =  0;               // length
-  $pkt[3] = 20;               // length
-  set_authenticator($pkt);    // authenticator
-
-//  dump_hex($pkt);
+  $hash = md5($ident);
   
-  return wrapper_send($pkt, $sock, $client_ip, $client_port);
-}
+  dbg("DEBUG: set_authenticator(): ident='$ident' hash='$hash'");
 
-function cb_access_request($payload, $sock, $client_ip, $client_port) {
-  echo "STUB: cb_access_request()";
-  return true;
+  for ($i=0; $i < 16; $i++) {
+    $pkt[$i+4] = rand() & 0xff;
+  }
 }
 
 /* codes and handlers */
@@ -86,38 +106,29 @@ $code_map = array( /* Codes: Radius-Auth, rfc https://tools.ietf.org/html/rfc286
                   45 => array("CoA-NAK",            null ),
 );
 
-function wrapper_send($payload /* array data: eg: array(1, 23, 00, 22, 111)*/,
-                      $sock,
-                      $client_ip,
-                      $client_port) {
-  $bytes = call_user_func_array("pack", array_merge(array("C*"), $payload));
+/* handlers */
+function cb_coa_request($payload, $sock, $client_ip, $client_port) {
+  $pkt = array();
 
-  $ret = socket_sendto($sock, $bytes, strlen($bytes), 0 , $client_ip, $client_port);
-  if (!$ret) {  
-    echo "socket_sendto(): failed: reason: " . socket_strerror(socket_last_error()) . "\n";
-    return false;
-  }
+  dbg("[<<] Response the request with CoA-ACK.");
+
+  $pkt[0] = 44;               // CoA-ACK
+  $pkt[1] = ord($payload[1]); // identifier
+  $pkt[2] =  0;               // length
+  $pkt[3] = 20;               // length
+  set_authenticator($pkt, $pkt[0], $pkt[1], $pkt[3]);    // authenticator
+
+//  dump_hex($pkt);
+
+  return wrapper_send($pkt, $sock, $client_ip, $client_port);
+}
+
+function cb_access_request($payload, $sock, $client_ip, $client_port) {
+  echo "STUB: cb_access_request()";
   return true;
 }
 
-function get_request_type($packet) {
-	GLOBAL $code_map;
-	$byte0 = ord($packet[0]);
-
-	if (@array_key_exists($byte0, $code_map)) {
-    $obj = new StdClass;
-
-    $map = $code_map[$byte0];
-    $obj->code = $map[0];
-    $obj->identifier = ord($packet[1]);
-    $obj->length = ord($packet[3]);
-    $obj->callback = $map[1];
-
-		return $obj;
-	} else {
-		return null;
-	}
-}
+// main()
 
 // socket settings
 if (($sock = socket_create(AF_INET, SOCK_DGRAM, 0)) === false) {
@@ -143,18 +154,17 @@ do {
     break 2;
   }
 
-  dbg("** Recebendo %d pacotes de $client_ip:$client_port>", count($socklen));
-
   // core
   $request = get_request_type($payload);
   if (!$request) {
-    dbg("WARNING: The %d is a uknown code, ignoring.", $payload[0]);
+    dbg("WARNING: Receiving the invalid packet '%d' from %s:%d, ignoring.", $payload[0], $client_ip, $client_port);
     dump_hex($payload);
     continue;
   }
   
-  dbg("[>>] Receiving the packet '%s' identifier=%d length=%d, calling %s()",
-            $request->code, $request->identifier, $request->length, $request->callback
+  dbg("[>>] Receiving the packet '%s' from %s:%d with identifier=%d length=%d, calling %s()",
+            $request->code, $client_ip, $client_port, $request->identifier,
+            $request->length, $request->callback
   );
 
   if (!function_exists($request->callback)) {
