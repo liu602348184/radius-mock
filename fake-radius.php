@@ -81,7 +81,7 @@ function set_authenticator(&$pkt, $code, $id, $length, $req_auth) {
 
   $hash = md5($ident);
   
-  dbg("DEBUG: set_authenticator(): ident='$ident' hash='$hash'");
+  dbg("DEBUG: set_authenticator(): ident='$ident' hash='$hash' [expected='6df6869c7f927dd5a51bc2355da83f9d']");
 
   for ($i=0; $i < 16; $i++) {
     $pkt[$i+4] = rand() & 0xff;
@@ -90,20 +90,20 @@ function set_authenticator(&$pkt, $code, $id, $length, $req_auth) {
 
 /* codes and handlers */
 $code_map = array( /* Codes: Radius-Auth, rfc https://tools.ietf.org/html/rfc2865 */
-                   1 => array("Access-Request",     "cb_access_request"),
-                   2 => array("Access-Accept",      null ),
-                   3 => array("Access-Reject",      null ),
-                   4 => array("Accounting-Request", null ),
-                   5 => array("Accounting-Response",null ),
-                  11 => array("Access-Challenge",   null ),
+                   1 => array("Access-Request",      "cb_access_request"),
+                   2 => array("Access-Accept",       null),
+                   3 => array("Access-Reject",       null),
+                   4 => array("Accounting-Request",  null),
+                   5 => array("Accounting-Response", null),
+                  11 => array("Access-Challenge",    null ),
 
                   /* Codes: CoA rfc https://tools.ietf.org/html/rfc5176 */
-                  40 => array("Disconnect-Request", null ),
-                  41 => array("Disconnect-ACK",     null ),
-                  42 => array("Disconnect-NAK",     null ),
-                  43 => array("CoA-Request",        "cb_coa_request"),
-                  44 => array("CoA-ACK",            null ),
-                  45 => array("CoA-NAK",            null ),
+                  40 => array("Disconnect-Request",  null),
+                  41 => array("Disconnect-ACK",      null),
+                  42 => array("Disconnect-NAK",      null),
+                  43 => array("CoA-Request",         "cb_coa_request"),
+                  44 => array("CoA-ACK",             null),
+                  45 => array("CoA-NAK",             null),
 );
 
 /* handlers */
@@ -131,12 +131,12 @@ function cb_access_request($payload, $sock, $client_ip, $client_port) {
 // main()
 
 // socket settings
-if (($sock = socket_create(AF_INET, SOCK_DGRAM, 0)) === false) {
+if(($sock = socket_create(AF_INET, SOCK_DGRAM, 0)) === false) {
     dbg("ERROR: socket_create() failed: reason: %s ", socket_strerror(socket_last_error()));
     exit(-1);
 }
 
-if (socket_bind($sock, "0.0.0.0", $port) === false) {
+if(socket_bind($sock, "0.0.0.0", $port) === false) {
     dbg("ERROR: socket_bind() failed: reason: %s", socket_strerror(socket_last_error($sock)));
     exit(-1);
 }
@@ -149,14 +149,14 @@ do {
 
   dbg("Waiting requests.");
 
-  if (!($socklen = socket_recvfrom ($sock, $payload, 512, 0, $client_ip, $client_port))) {
+  if(!($socklen = socket_recvfrom ($sock, $payload, 512, 0, $client_ip, $client_port))) {
     dbg("WARNING: socket_read() failed: reason: " . socket_strerror(socket_last_error($msgsock)));
     break 2;
   }
 
   // core
   $request = get_request_type($payload);
-  if (!$request) {
+  if(!$request) {
     dbg("WARNING: Receiving the invalid packet '%d' from %s:%d, ignoring.", $payload[0], $client_ip, $client_port);
     dump_hex($payload);
     continue;
@@ -167,7 +167,7 @@ do {
             $request->length, $request->callback
   );
 
-  if (!function_exists($request->callback)) {
+  if(!function_exists($request->callback)) {
     dbg("ERROR: The callback %s() don't exist, ignoring.\n", $request->callback);
     continue;
   }
@@ -182,5 +182,5 @@ do {
 
 socket_close($sock);
 
-echo "Finalizando Servidor\n";
+echo "Quit\n";
 ?>
