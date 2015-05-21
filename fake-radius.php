@@ -31,7 +31,7 @@ $pack_types = array( /* Codes: Radius-Auth, rfc https://tools.ietf.org/html/rfc2
                    1 => array("Access-Request",      "cb_access_request"),
                    2 => array("Access-Accept",       null),
                    3 => array("Access-Reject",       null),
-                   4 => array("Accounting-Request",  null),
+                   4 => array("Accounting-Request",  "cb_acct_request"),
                    5 => array("Accounting-Response", null),
                   11 => array("Access-Challenge",    null ),
 
@@ -44,30 +44,14 @@ $pack_types = array( /* Codes: Radius-Auth, rfc https://tools.ietf.org/html/rfc2
                   45 => array("CoA-NAK",             null),
 );
 
-/* helpers */
-function dbg() {
-  $arg = func_get_args();
-  $arg[0] = sprintf("**dbg(): %s \n", $arg[0]);
-  call_user_func_array("printf", $arg);
-}
+function get_request_code($pkt_name) {
+  GLOBAL $pack_types;
 
-function dump_hex($pkt) {
-  echo "<hexdump>\n";
-  echo "{ ";
-  for ($i=0; $i < count($pkt); $i++) {
-    $ch = ($pkt[$i]);
-    printf("0x%x, ", $ch);
+  foreach($pack_types as $var => $key) {
+    if ($key[0] == $pkt_name)
+      return $var;
   }
-  echo "} \n</hexdump>\n";
-}
-
-function wrapper_send($client, $response) {
-  $ret = socket_sendto($client['sock'], $response, strlen($response), 0 , $client['ip'], $client['port']);
-  if (!$ret) {  
-    echo "socket_sendto(): failed: reason: " . socket_strerror(socket_last_error()) . "\n";
-    return false;
-  }
-  return true;
+  return null;
 }
 
 function get_request_type($request) {
@@ -85,25 +69,67 @@ function get_request_type($request) {
   }
 }
 
+$attributes = array(
+                 1 => "User-Name",
+                 2 => "User-Password",
+                 4 => "NAS-IP-Address",
+                 5 => "NAS-Port",
+                25 => "Class"
+);
+
+/* helpers */
+function dbg() {
+  $arg = func_get_args();
+  $arg[0] = sprintf("**dbg(): %s \n", $arg[0]);
+  call_user_func_array("printf", $arg);
+}
+
 /* handlers */
-function cb_coa_request($client, $request) {
+function wrapper_envelope($client, $request, $code, $response = null) {
   GLOBAL $secret;
 
-  dbg("[<<] Response the request with CoA-ACK.");
- 
   $r = new RadiusResponse();
-  $r->code = 44;
-  $r->attributes =  array(
-    @Attribute::expect(18, 'JORGEEEEEEEEEEEEEEEEEEEEEEEfilter'),
-  );
-  $response = $r->serialise($request, $secret);
+  $r->code = get_request_code($code);
+
+  if (!empty($response)) {
+    $r->attributes = array(
+      @Attribute::expect(18 /*Reply-Message*/, $response),
+    );
+  }
+
+  $body = $r->serialise($request, $secret);
   
-  return wrapper_send($client, $response);
+  $ret = socket_sendto($client['sock'], $body, strlen($body), 0 , $client['ip'], $client['port']);
+  if (!$ret) {  
+    echo "socket_sendto(): failed: reason: " . socket_strerror(socket_last_error()) . "\n";
+    return false;
+  }
+  return true;
+}
+
+/* handlers */
+function cb_coa_request($client, $request) {
+  $res = "CoA-ACK";
+
+  dbg("[<<] Response the request with $res.");
+
+  return wrapper_envelope($client, $request, "$res", "RADIUS::FAKE() Pacote $res OK");
 }
 
 function cb_access_request($client, $request) {
-  echo "STUB: cb_access_request()";
-  return true;
+  $res = "Access-Accept";
+
+  dbg("[<<] Response the request with $res.");
+
+  return wrapper_envelope($client, $request, "$res", "RADIUS::FAKE() Pacote $res OK");
+}
+
+function cb_acct_request($client, $request) {
+  $res = "Accounting-Response";
+
+  dbg("[<<] Response the request with $res.");
+
+  return wrapper_envelope($client, $request, "$res", "RADIUS::FAKE() Pacote $res OK");
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -150,10 +176,10 @@ do {
             strlen($request->raw), $code->cb
   );
 
-  dbg("<packet request>");
-  print_r($request->attributes);
-  dbg("</packet request>");
-  
+  //dbg("<packet request>");
+  //print_r($request->attributes);
+  //dbg("</packet request>");
+
   if(!function_exists($code->cb)) {
     dbg("ERROR: The callback %s() don't exist, ignoring.\n", $code->cb);
     continue;
